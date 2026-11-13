@@ -1,0 +1,88 @@
+name: Build Unsigned Loop IPA (SideStore)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Match this to "runs-on" in .github/workflows/build_loop.yml
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - name: Checkout LoopWorkspace with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Match this to the Xcode version LoopKit's build_loop.yml selects
+      - name: Select Xcode
+        run: sudo xcode-select --switch /Applications/Xcode_26.2.app
+
+      - name: Free-account changes
+        run: |
+          set -e
+          # Remove capabilities free Apple accounts can't use
+          find . -name "*.entitlements" -not -path "./.git/*" | while read -r f; do
+            for key in com.apple.developer.siri aps-environment com.apple.developer.nfc.readersession.formats; do
+              /usr/libexec/PlistBuddy -c "Delete :$key" "$f" 2>/dev/null && echo "Removed $key from $f" || true
+            done
+          done
+
+          # Compile Siri out (same flag LoopDocs uses for free builds)
+          cfg=LoopConfigOverride.xcconfig
+          if grep -q '^SWIFT_ACTIVE_COMPILATION_CONDITIONS' "$cfg"; then
+            sed -i '' '/^SWIFT_ACTIVE_COMPILATION_CONDITIONS/ s/$/ SIRI_DISABLED/' "$cfg"
+          else
+            echo 'SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) SIRI_DISABLED' >> "$cfg"
+          fi
+
+          # Fixed bundle ID so every rebuild installs over the same app
+          echo 'MAIN_APP_BUNDLE_IDENTIFIER = com.sideload.loopkit' >> "$cfg"
+
+          echo "----- $cfg -----"
+          cat "$cfg"
+
+      - name: Build (ad-hoc signed so entitlements are embedded)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -workspace LoopWorkspace.xcworkspace \
+            -scheme LoopWorkspace \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Loop.xcarchive" \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Package IPA
+        run: |
+          set -e
+          APP="$RUNNER_TEMP/Loop.xcarchive/Products/Applications/Loop.app"
+
+          # SideStore can't install the Watch app; Intent extension is useless without Siri
+          rm -rf "$APP/Watch"
+          rm -rf "$APP"/PlugIns/*Intent*.appex
+
+          echo "Remaining extensions (each uses one app ID):"
+          ls "$APP/PlugIns"
+
+          echo "Main app entitlements (look for HealthKit and an app group):"
+          codesign -d --entitlements - "$APP" || true
+
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          zip -qry Loop.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Loop-SideStore-ipa
+          path: ${{ runner.temp }}/ipa/Loop.ipa
+          retention-days: 30
