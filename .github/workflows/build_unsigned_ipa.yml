@@ -5,18 +5,18 @@ on:
 
 jobs:
   build:
-    # Match this to "runs-on" in .github/workflows/build_loop.yml
-    runs-on: macos-26
+    # Same runner as the build job in build_loop.yml
+    runs-on: xcode-27
     timeout-minutes: 120
     steps:
       - name: Checkout LoopWorkspace with submodules
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      # Match this to the Xcode version LoopKit's build_loop.yml selects
+      # Same Xcode as build_loop.yml
       - name: Select Xcode
-        run: sudo xcode-select --switch /Applications/Xcode_26.2.app
+        run: sudo xcode-select --switch /Applications/Xcode_27.1.app/Contents/Developer
 
       - name: Free-account changes
         run: |
@@ -81,7 +81,7 @@ jobs:
           zip -qry Loop.ipa Payload
 
       - name: Upload IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Loop-SideStore-ipa
           path: ${{ runner.temp }}/ipa/Loop.ipa
