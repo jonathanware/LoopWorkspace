@@ -69,6 +69,22 @@ jobs:
           rm -rf "$APP/Watch"
           rm -rf "$APP"/PlugIns/*Intent*.appex
 
+          # SideStore renames app groups to <group>.<TEAMID> on free accounts.
+          # Point Loop's Info.plist at the renamed group so it can find its data.
+          TEAM_ID="375B4F544Y"
+          for plist in "$APP/Info.plist" "$APP"/PlugIns/*.appex/Info.plist; do
+            grp=$(/usr/libexec/PlistBuddy -c "Print :AppGroupIdentifier" "$plist" 2>/dev/null || true)
+            if [ -n "$grp" ]; then
+              case "$grp" in
+                *".$TEAM_ID") ;;
+                *) /usr/libexec/PlistBuddy -c "Set :AppGroupIdentifier $grp.$TEAM_ID" "$plist" ;;
+              esac
+              echo "$plist: $grp -> $(/usr/libexec/PlistBuddy -c 'Print :AppGroupIdentifier' "$plist")"
+            else
+              echo "$plist: no AppGroupIdentifier key"
+            fi
+          done
+
           echo "Remaining extensions (each uses one app ID):"
           ls "$APP/PlugIns"
 
